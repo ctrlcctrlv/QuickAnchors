@@ -9,7 +9,7 @@ import fontforge
 import tkinter as tk
 from tempfile import mktemp
 from PIL import Image, ImageTk
-import os
+import os, sys
 import cairosvg
 from io import BytesIO
 
@@ -37,6 +37,7 @@ for v in REPLACEMENTS.values():
     NO_ASCENDERS.add(v)
 
 ACCENT_UNI = "uni0302"
+OUTFILE = "top.tsv"
 
 # How far off on the x axis is the origin?
 def viewBox_diff(glyph, svgfn):
@@ -70,6 +71,7 @@ def combine_images(im, im2, x, y):
     return im
 
 # If you want to be able to move the anchor anywhere, just make this function always return False.
+# Set them negative for bottom accents. :)
 def capy_for_letter(gn):
     letter = gn.split(".")[0]
     if letter in CAPS or letter in HAS_ASCENDERS:
@@ -81,6 +83,8 @@ def capy_for_letter(gn):
 
 # takes name of a temporary file where the image is
 def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
+    outfile = open(OUTFILE, "a+")
+
     tkroot = tk.Tk()
     w = tk.Frame()
     tkimage = ImageTk.PhotoImage(im)
@@ -103,11 +107,11 @@ def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
         tkroot.destroy()
 
     def click(event):
-        nonlocal vbdiff, tkroot, glyph
+        nonlocal vbdiff, tkroot, glyph, outfile
         x = event.x + vbdiff[0]
         y = -(event.y - font.ascent)
         capy = capy_for_letter(glyph.glyphname)
-        print("{}\t{}\t{}".format(glyph.glyphname, x, capy if capy else y))
+        outfile.write("{}\t{}\t{}\n".format(glyph.glyphname, x, capy if capy else y))
         tkroot.destroy()
 
     tkroot.bind("q", quit)
@@ -117,9 +121,17 @@ def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
     canvas.pack()
     w.mainloop()
 
+    outfile.close()
     return should_exit
 
 def main(_, font):
+    doneglyphs = list()
+
+    if os.path.exists(OUTFILE):
+        with open(OUTFILE) as f:
+            for line in f.readlines():
+                doneglyphs.append(line.split("\t")[0])
+
     font = fontforge.activeFont()
     
     font.ascent += 200
@@ -135,16 +147,23 @@ def main(_, font):
 
     regexp = re.compile(r"^[a-zA-Z](\.[a-zA-Z0-9_]+)?$")
 
-    glyphs = [g.glyphname for g in font.glyphs()]
+    glyphs = [g.glyphname if g.glyphname not in REPLACEMENTS else REPLACEMENTS[g.glyphname]
+              for g in font.glyphs() if re.match(regexp, g.glyphname)]
+
     # makes it less boring. feel free to comment
     random.shuffle(glyphs)
+
+    if set(doneglyphs) == set(glyphs):
+        fontforge.logWarning("QuickAnchors: No glyphs which match the criteria and aren't done")
 
     for glyph in glyphs:
         glyph = font[glyph]
 
         if glyph.glyphname in REPLACEMENTS:
             glyph = font[REPLACEMENTS[glyph.glyphname]]
-        elif not re.match(regexp, glyph.glyphname):
+
+        if glyph.glyphname in doneglyphs:
+            print("Warning: skipping {}".format(repr(glyph)), file=sys.stderr)
             continue
 
         glyph.width += 300
