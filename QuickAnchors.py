@@ -37,7 +37,7 @@ for v in REPLACEMENTS.values():
     NO_ASCENDERS.add(v)
 
 ACCENT_UNI = "uni0302"
-OUTFILE = "top.tsv"
+OUTFILE = "build_data/top.tsv"
 
 # How far off on the x axis is the origin?
 def viewBox_diff(glyph, svgfn):
