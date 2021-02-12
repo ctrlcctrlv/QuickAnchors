@@ -89,9 +89,9 @@ def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
     w = tk.Frame()
     tkimage = ImageTk.PhotoImage(im)
     canvas = tk.Canvas(w, width = tkimage.width(), height = tkimage.height())
-    image_on_canvas = canvas.create_image(0, 0, anchor=tk.NW, image=tkimage)  
+    image_on_canvas = canvas.create_image(0, 0, anchor=tk.NW, image=tkimage)
     center_window(tkroot, tkimage.width(), tkimage.height())
-    should_exit = False
+    should_exit = should_prev = False
 
     def motion(event):
         nonlocal vbdiff, vbdiffa, im, imaccent, canvas, image_on_canvas, tkimage, glyph
@@ -101,11 +101,6 @@ def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
         canvas.itemconfig(image_on_canvas, image=tkimage)
         canvas.update()
 
-    def quit(_):
-        nonlocal tkroot, should_exit
-        should_exit = True
-        tkroot.destroy()
-
     def click(event):
         nonlocal vbdiff, tkroot, glyph, outfile
         x = event.x + vbdiff[0]
@@ -114,15 +109,31 @@ def pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa):
         outfile.write("{}\t{}\t{}\n".format(glyph.glyphname, x, capy if capy else y))
         tkroot.destroy()
 
-    tkroot.bind("q", quit)
+    def quit(_):
+        nonlocal tkroot, should_exit
+        should_exit = True
+        tkroot.destroy()
+
+    def prev(_):
+        nonlocal tkroot, should_prev
+        should_prev = True
+        tkroot.destroy()
+
+    def next_(_):
+        nonlocal tkroot
+        tkroot.destroy()
+
     tkroot.bind("<Motion>", motion)
     tkroot.bind("<Button-1>", click)
+    tkroot.bind("p", prev)
+    tkroot.bind("n", next_)
+    tkroot.bind("q", quit)
     w.pack()
     canvas.pack()
     w.mainloop()
 
     outfile.close()
-    return should_exit
+    return (should_exit, should_prev)
 
 def main(_, font):
     doneglyphs = list()
@@ -133,7 +144,7 @@ def main(_, font):
                 doneglyphs.append(line.split("\t")[0])
 
     font = fontforge.activeFont()
-    
+
     font.ascent += 200
 
     # we must write an SVG because the PNG output doesn't preserve left/right bearings when glyph overflows bearings. my fault partially lol
@@ -156,23 +167,36 @@ def main(_, font):
     if set(doneglyphs) == set(glyphs):
         fontforge.logWarning("QuickAnchors: No glyphs which match the criteria and aren't done")
 
-    for glyph in glyphs:
-        glyph = font[glyph]
+    def process_glyph(i, glyph):
+        nonlocal font, doneglyphs, accent, imaccent, regexp, glyphs, tempf
+        should_exit = should_prev = False
 
-        if glyph.glyphname in REPLACEMENTS:
-            glyph = font[REPLACEMENTS[glyph.glyphname]]
+        glyph = font[glyph]
 
         if glyph.glyphname in doneglyphs:
             print("Warning: skipping {}".format(repr(glyph)), file=sys.stderr)
-            continue
+        else:
+            glyph.width += 300
+            glyph.export(tempf, pixelsize=font.em)
+            vbdiff = viewBox_diff(glyph, tempf)
+            im = svg_to_PILImage(tempf)
+            (should_exit, should_prev) = pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa)
+            os.remove(tempf)
+            glyph.width -= 300
 
-        glyph.width += 300
-        glyph.export(tempf, pixelsize=font.em)
-        vbdiff = viewBox_diff(glyph, tempf)
-        im = svg_to_PILImage(tempf)
-        should_exit = pop_window_for_image(font, glyph, im, imaccent, vbdiff, vbdiffa)
-        os.remove(tempf)
-        glyph.width -= 300
-        if should_exit: break
+        if should_exit:
+            return False
+        elif should_prev and i != 0:
+            return process_glyph(i-1, glyphs[i-1])
+        elif should_prev:
+            return process_glyph(0, glyphs[0])
+        elif i+1 == len(glyphs):
+            return True
+        else:
+            return process_glyph(i+1, glyphs[i+1])
+
+        return True
+
+    process_glyph(0, glyphs[0])
 
 fontforge.registerMenuItem(main, None, None, "Font", None, "QuickAnchors")
